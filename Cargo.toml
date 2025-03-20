@@ -1,0 +1,19 @@
+[package]
+name = "embedded-mono-img"
+version = "0.1.0"
+description = "Convert .png images to raw binary for embedded_graphics"
+authors = ["kpcyrd <git@rxv.cc>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/kpcyrd/embedded-mono-img"
+categories = ["command-line-utilities"]
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+env_logger = "0.11"
+image = { version = "0.25.5", default-features = false, features = ["png"] }
+log = "0.4"
+
+[dev-dependencies]
+data-encoding = "2.8.0"
