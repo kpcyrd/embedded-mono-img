@@ -17,11 +17,28 @@ pub struct Args {
     /// Threshold to decide if pixel should be on/off
     #[arg(short, long, default_value = "100")]
     threshold: u8,
+    /// Don't flush partial bytes after completing a pixel row
+    #[arg(short = 'N', long)]
+    no_flush_after_pixel_row: bool,
     /// The path to write the output to (- for stdout)
     #[arg(short, long)]
     output: PathBuf,
     /// The path to read the image from (- for stdin)
     input: PathBuf,
+}
+
+pub struct Settings {
+    threshold: u8,
+    no_flush_after_pixel_row: bool,
+}
+
+impl From<&Args> for Settings {
+    fn from(args: &Args) -> Self {
+        Self {
+            threshold: args.threshold,
+            no_flush_after_pixel_row: args.no_flush_after_pixel_row,
+        }
+    }
 }
 
 pub type Image = ImageBuffer<Luma<u8>, Vec<u8>>;
@@ -97,15 +114,21 @@ pub fn load_image<R: io::BufRead + io::Seek>(reader: R) -> Result<Image> {
 pub fn process_image<W: io::Write>(
     gray_image: &Image,
     output: &mut W,
-    threshold: u8,
+    settings: &Settings,
 ) -> Result<()> {
     let mut pack = Pack::new(output);
 
     // Pack 8 pixels into 1 byte
-    for px in gray_image.pixels() {
-        trace!("pixel = {px:?}");
-        let bit = if px.0[0] > threshold { 1 } else { 0 };
-        pack.add(bit).context("Failed to write to output file")?;
+    for row in gray_image.rows() {
+        for px in row {
+            trace!("pixel = {px:?}");
+            let bit = if px.0[0] > settings.threshold { 1 } else { 0 };
+            pack.add(bit).context("Failed to write to output file")?;
+        }
+
+        if !settings.no_flush_after_pixel_row {
+            pack.flush().context("Failed to write to output file")?;
+        }
     }
 
     // Flush remaining pixels
@@ -149,7 +172,7 @@ fn main() -> Result<()> {
     };
 
     // Process image
-    process_image(&gray_image, &mut output, args.threshold)?;
+    process_image(&gray_image, &mut output, &Settings::from(&args))?;
 
     Ok(())
 }
@@ -158,7 +181,14 @@ fn main() -> Result<()> {
 mod tests {
     use super::*;
 
-    const DEFAULT_THRESHOLD: u8 = 100;
+    impl Default for Settings {
+        fn default() -> Settings {
+            Self {
+                threshold: 100,
+                no_flush_after_pixel_row: false,
+            }
+        }
+    }
 
     #[test]
     fn test_all_true() {
@@ -221,13 +251,45 @@ UQR6fD/pUM1APgOn2fdDDerCATgDscAMMHqX4sz0t3+V+m/WOjn9Gzyk1gAAAABJRU5ErkJggg==";
         let png = data_encoding::BASE64.decode(png).unwrap();
         let mut output = Vec::new();
         let image = load_image(io::Cursor::new(png)).unwrap();
-        process_image(&image, &mut output, DEFAULT_THRESHOLD).unwrap();
+        process_image(&image, &mut output, &Settings::default()).unwrap();
         assert_eq!(
             output,
             &[
                 0x00, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x07, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x7c,
                 0x40, 0x08, 0xff, 0x20, 0x04, 0xff, 0xf0, 0x03, 0xfc, 0xe0, 0x19, 0xff, 0xf8, 0x27,
                 0xff, 0x24, 0x43, 0xff, 0x42, 0x42, 0xff, 0x42, 0x24, 0x7e, 0x24, 0x18, 0x00, 0x18
+            ]
+        );
+    }
+
+    #[test]
+    fn test_convert_not_multiple_of_8() {
+        let png = b"\
+iVBORw0KGgoAAAANSUhEUgAAAB4AAAAeCAQAAACROWYpAAAAAXNSR0IB2cksfwAAAARnQU1BAACx\
+jwv8YQUAAAAgY0hSTQAAeiYAAICEAAD6AAAAgOgAAHUwAADqYAAAOpgAABdwnLpRPAAAAAJiS0dE\
+AACqjSMyAAAACXBIWXMAAC4jAAAuIwF4pT92AAABOElEQVQ4y2Nk+M9ANmBiYBg2mpUYvjH8R4K5\
+pGguYeBE4QfhtPs/Jrz2HxV8/M/7H5s6LJo9///5jw66idW85j8muECs5qdwLU/grF//rbFoxgiw\
+HAYpOHsSww8oi5Uhg5gA2we37dV/hv9n4bx7hG3mZTCGs88xMDDsh/MUGGIJ2dyFFEiZ/xn+y/z/\
+CudvIxRg5+FKn0NFTsJF3uB3tgWDFpx9Fkrvg4sIM9Tic/YiJEcnQcXE/n+Gi53A5+x7cGVPkUSP\
+wUW//VfDpTnm/7//hMAMXH6OYmAkmIPtcfn59X/C4M9/X2w21zKIEFF2MDMkYLP5OJLpThgx+gIu\
++wwzwNT+f4NLX8eSircgOT0P3dmFSAXPESzOXY2jUPrP8J/h/3WknGuKNeM/hqv49F8MKsY4AmsM\
+AAy2Yn26+qMSAAAAAElFTkSuQmCC";
+        let png = data_encoding::BASE64.decode(png).unwrap();
+        let mut output = Vec::new();
+        let image = load_image(io::Cursor::new(png)).unwrap();
+        process_image(&image, &mut output, &Settings::default()).unwrap();
+        assert_eq!(
+            output,
+            [
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x1f, 0xe0, 0x00, 0x00, 0x3f, 0xe0, 0x00, 0x00, 0x3f, 0xe0, 0x00,
+                0x00, 0x3f, 0xf0, 0x00, 0x00, 0x7f, 0xf0, 0x00, 0x00, 0x7f, 0xf0, 0x00, 0x00, 0xff,
+                0xf8, 0x00, 0x00, 0xfd, 0xf8, 0x00, 0x00, 0xfd, 0xf8, 0x00, 0x01, 0xfc, 0xfc, 0x00,
+                0x01, 0xf8, 0xfc, 0x00, 0x01, 0xf8, 0xfe, 0x00, 0x03, 0xf0, 0x7e, 0x00, 0x03, 0xf0,
+                0x7e, 0x00, 0x03, 0xff, 0xff, 0x00, 0x07, 0xff, 0xff, 0x00, 0x07, 0xff, 0xff, 0x00,
+                0x0f, 0xff, 0xff, 0x80, 0x0f, 0xc0, 0x1f, 0x80, 0x0f, 0xc0, 0x1f, 0xc0, 0x1f, 0xc0,
+                0x0f, 0xc0, 0x1f, 0x80, 0x0f, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
             ]
         );
     }
