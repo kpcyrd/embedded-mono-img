@@ -1,6 +1,6 @@
 [package]
 name = "embedded-mono-img"
-version = "0.1.0"
+version = "0.2.0"
 description = "Convert .png images to raw binary for embedded_graphics"
 authors = ["kpcyrd <git@rxv.cc>"]
 license = "MIT OR Apache-2.0"
